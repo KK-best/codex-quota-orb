@@ -15,7 +15,12 @@ final class WindowCoordinator {
 
     func showOrb() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 80, height: 228),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: OrbDisplaySettings.panelWidth,
+                height: OrbDisplaySettings.panelHeight
+            ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -43,9 +48,16 @@ final class WindowCoordinator {
             },
             onDrag: { [weak self] translation, ended in
                 self?.moveOrb(translation: translation, ended: ended)
+            },
+            onHeightChange: { [weak self] height in
+                self?.resizeOrbPanel(height: height)
             }
         )
-        panel.contentView = NSHostingView(rootView: rootView)
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.layer?.isOpaque = false
+        panel.contentView = hostingView
         restorePosition(for: panel)
         panel.orderFrontRegardless()
         orbPanel = panel
@@ -162,6 +174,21 @@ final class WindowCoordinator {
         if ended {
             savePosition(panel.frame.origin)
             self.dragOrigin = nil
+        }
+    }
+
+    private func resizeOrbPanel(height: CGFloat) {
+        guard let panel = orbPanel else { return }
+        guard abs(panel.frame.height - height) > 0.5 else { return }
+
+        var frame = panel.frame
+        let maxY = frame.maxY
+        frame.size.height = height
+        frame.origin.y = maxY - height
+        panel.setFrame(frame, display: true, animate: true)
+
+        if let dashboardPanel, dashboardPanel.isVisible {
+            positionDashboard(dashboardPanel)
         }
     }
 
