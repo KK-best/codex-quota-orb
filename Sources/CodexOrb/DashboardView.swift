@@ -144,6 +144,12 @@ struct DashboardView: View {
 
             Spacer()
 
+            SettingsLink {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(PanelButtonStyle())
+            .help("悬浮球显示设置")
+
             Button {
                 monitor.refreshAll()
             } label: {
