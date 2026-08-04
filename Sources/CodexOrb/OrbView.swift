@@ -6,8 +6,15 @@ struct OrbView: View {
     let onTap: () -> Void
     let onOpenReset: () -> Void
     let onDrag: (CGSize, Bool) -> Void
+    let onHeightChange: (CGFloat) -> Void
 
     @State private var hovering = false
+    @State private var hoveredProbability: String?
+    @State private var displayedRemaining = 0.0
+    @AppStorage(OrbDisplaySettings.show24hKey)
+    private var show24h = true
+    @AppStorage(OrbDisplaySettings.show48hKey)
+    private var show48h = true
 
     private var remaining: Double {
         monitor.account?.quota.remainingPercent ?? 0
@@ -31,8 +38,7 @@ struct OrbView: View {
         ZStack(alignment: .top) {
             Button(action: onTap) {
                 ZStack {
-                    Circle()
-                        .fill(.ultraThinMaterial)
+                    orbFill
 
                     Circle()
                         .stroke(Color.white.opacity(0.34), lineWidth: 1)
@@ -42,7 +48,7 @@ struct OrbView: View {
                         .padding(7)
 
                     Circle()
-                        .trim(from: 0, to: remaining / 100)
+                        .trim(from: 0, to: displayedRemaining / 100)
                         .stroke(
                             AngularGradient(
                                 colors: [accent.opacity(0.65), accent, accent.opacity(0.78)],
@@ -52,11 +58,11 @@ struct OrbView: View {
                         )
                         .rotationEffect(.degrees(-90))
                         .padding(7)
-                        .animation(.easeInOut(duration: 0.45), value: remaining)
+                        .animation(.easeInOut(duration: 0.45), value: displayedRemaining)
 
                     VStack(spacing: -1) {
-                        if let quota = monitor.account?.quota {
-                            Text("\(Int(quota.remainingPercent.rounded()))")
+                        if monitor.account != nil {
+                            AnimatedIntegerText(value: displayedRemaining)
                                 .font(.system(size: 21, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
                             Text("% 余量")
@@ -78,12 +84,17 @@ struct OrbView: View {
                         .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 1))
                         .offset(x: 22, y: -21)
                 }
+                .compositingGroup()
+                .shadow(
+                    color: .black.opacity(hovering ? 0.18 : 0.11),
+                    radius: hovering ? 10 : 7,
+                    y: 5
+                )
             }
             .buttonStyle(.plain)
             .frame(width: 64, height: 64)
             .padding(4)
             .scaleEffect(hovering ? 1.045 : 1)
-            .shadow(color: .black.opacity(hovering ? 0.22 : 0.15), radius: hovering ? 16 : 11, y: 7)
             .contentShape(Circle())
             .onHover { hovering = $0 }
             .simultaneousGesture(
@@ -98,18 +109,64 @@ struct OrbView: View {
                 } ?? "不可用"
             )
 
-            probabilityOrb(
-                value: monitor.resetProbability?.preferred24h,
-                label: "24h",
-                offset: 76
-            )
-            probabilityOrb(
-                value: monitor.resetProbability?.model48h,
-                label: "48h",
-                offset: 152
+            if show24h {
+                probabilityOrb(
+                    value: monitor.resetProbability?.preferred24h,
+                    label: "24h",
+                    offset: OrbDisplaySettings.orbStep
+                )
+            }
+            if show48h {
+                probabilityOrb(
+                    value: monitor.resetProbability?.model48h,
+                    label: "48h",
+                    offset: OrbDisplaySettings.orbStep * (show24h ? 2 : 1)
+                )
+            }
+        }
+        .frame(
+            width: OrbDisplaySettings.panelWidth,
+            height: OrbDisplaySettings.panelHeight(show24h: show24h, show48h: show48h),
+            alignment: .top
+        )
+        .onAppear {
+            displayedRemaining = remaining
+            onHeightChange(
+                OrbDisplaySettings.panelHeight(show24h: show24h, show48h: show48h)
             )
         }
-        .frame(width: 80, height: 228, alignment: .top)
+        .onChange(of: remaining) { _, value in
+            if !hovering {
+                displayedRemaining = value
+            }
+        }
+        .onChange(of: hovering) { _, isHovering in
+            guard monitor.account != nil else { return }
+            if isHovering {
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) {
+                    displayedRemaining = 100
+                }
+                withAnimation(.easeOut(duration: 0.72)) {
+                    displayedRemaining = remaining
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    displayedRemaining = remaining
+                }
+            }
+        }
+        .onChange(of: show24h) { _, _ in
+            onHeightChange(
+                OrbDisplaySettings.panelHeight(show24h: show24h, show48h: show48h)
+            )
+        }
+        .onChange(of: show48h) { _, _ in
+            onHeightChange(
+                OrbDisplaySettings.panelHeight(show24h: show24h, show48h: show48h)
+            )
+        }
     }
 
     private func probabilityOrb(
@@ -118,10 +175,10 @@ struct OrbView: View {
         offset: CGFloat
     ) -> some View {
         let accent = probabilityAccent(value)
+        let isHovered = hoveredProbability == label
         return Button(action: onOpenReset) {
             ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
+                orbFill
 
                 Circle()
                     .stroke(Color.white.opacity(0.34), lineWidth: 1)
@@ -162,16 +219,38 @@ struct OrbView: View {
                     }
                 }
             }
+            .compositingGroup()
+            .shadow(
+                color: .black.opacity(isHovered ? 0.16 : 0.11),
+                radius: isHovered ? 10 : 7,
+                y: 5
+            )
         }
         .buttonStyle(.plain)
         .frame(width: 64, height: 64)
         .padding(4)
-        .shadow(color: .black.opacity(0.15), radius: 11, y: 7)
+        .scaleEffect(isHovered ? 1.045 : 1)
+        .animation(.easeOut(duration: 0.18), value: isHovered)
+        .onHover { isHovering in
+            hoveredProbability = isHovering ? label : nil
+        }
         .contentShape(Circle())
         .help("打开 codex-reset.com · \(label) 重置概率")
         .accessibilityLabel("打开 Codex Reset")
         .accessibilityValue("\(label) 重置概率 \(probabilityText(value))")
         .offset(y: offset)
+    }
+
+    private var orbFill: some View {
+        Circle()
+            // A shape-colour surface avoids the rectangular edge that AppKit can
+            // expose when a SwiftUI material is hosted in a clear NSPanel.
+            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.84))
+            .overlay(
+                Circle()
+                    .fill(Color.white.opacity(0.045))
+            )
+            .clipShape(Circle())
     }
 
     private func probabilityText(_ value: Double?) -> String {
@@ -190,5 +269,18 @@ struct OrbView: View {
             return Color(nsColor: .systemOrange)
         }
         return Color.accentColor
+    }
+}
+
+private struct AnimatedIntegerText: View, Animatable {
+    var value: Double
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text("\(Int(value.rounded()))")
     }
 }
