@@ -7,7 +7,7 @@ struct CodexOrbApp: App {
 
     var body: some Scene {
         Settings {
-            EmptyView()
+            SettingsView()
         }
     }
 }
@@ -19,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        UserDefaults.standard.register(defaults: [
+            OrbDisplaySettings.show24hKey: true,
+            OrbDisplaySettings.show48hKey: true
+        ])
         let coordinator = WindowCoordinator(monitor: monitor)
         coordinator.showOrb()
         self.coordinator = coordinator
