@@ -29,7 +29,7 @@ If you searched for **Codex quota monitor**, **Codex token usage tracker**, **Co
 ## Features
 
 - **Native floating orb** — compact macOS UI, draggable, always available, and clean around the transparent edge.
-- **Quota refresh animation** — hover the main orb to see the ring read from 100% down to the current value.
+- **Three-orb refresh animation** — hover any orb to watch its ring ease from the current value to 0%, complete a full 0% → 100% cycle, then settle on the latest value.
 - **Configurable forecast orbs** — show both 24h/48h forecasts, only one, or hide both from Settings.
 - **Silent refresh** — quota and reset forecasts update every five minutes without opening a browser window.
 - **Local project and conversation usage** — groups local Codex activity and keeps the conversation labels short and readable.
