@@ -13,8 +13,8 @@ struct OrbView: View {
     @State private var displayedRemaining = 0.0
     @State private var displayed24h: Double?
     @State private var displayed48h: Double?
-    @State private var mainHoverSequence = 0
-    @State private var probabilityHoverSequence = 0
+    @State private var mainRefreshTask: Task<Void, Never>?
+    @State private var probabilityRefreshTask: Task<Void, Never>?
     @AppStorage(OrbDisplaySettings.show24hKey)
     private var show24h = true
     @AppStorage(OrbDisplaySettings.show48hKey)
@@ -30,6 +30,11 @@ struct OrbView: View {
 
     private var probability48h: Double? {
         monitor.resetProbability?.model48h
+    }
+
+    private var quotaAccessibilityValue: String {
+        guard monitor.account != nil else { return "不可用" }
+        return "\(Int(displayedRemaining.rounded()))%，\(monitor.isDashboardPresented ? "已展开" : "已收起")"
     }
 
     private var accent: Color {
@@ -101,24 +106,27 @@ struct OrbView: View {
                     radius: hovering ? 10 : 7,
                     y: 5
                 )
+                .scaleEffect(hovering ? 1.045 : 1)
             }
             .buttonStyle(.plain)
             .frame(width: 64, height: 64)
             .padding(4)
-            .scaleEffect(hovering ? 1.045 : 1)
             .contentShape(Circle())
-            .onHover { hovering = $0 }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    updateMainHover(true)
+                case .ended:
+                    updateMainHover(false)
+                }
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 5, coordinateSpace: .global)
                     .onChanged { onDrag($0.translation, false) }
                     .onEnded { onDrag($0.translation, true) }
             )
             .accessibilityLabel("Codex 剩余额度")
-            .accessibilityValue(
-                monitor.account.map {
-                    "\(Int($0.quota.remainingPercent.rounded()))%，\(monitor.isDashboardPresented ? "已展开" : "已收起")"
-                } ?? "不可用"
-            )
+            .accessibilityValue(quotaAccessibilityValue)
 
             if show24h {
                 probabilityOrb(
@@ -188,6 +196,10 @@ struct OrbView: View {
                 OrbDisplaySettings.panelHeight(show24h: show24h, show48h: show48h)
             )
         }
+        .onDisappear {
+            mainRefreshTask?.cancel()
+            probabilityRefreshTask?.cancel()
+        }
     }
 
     private func probabilityOrb(
@@ -246,18 +258,17 @@ struct OrbView: View {
                 radius: isHovered ? 10 : 7,
                 y: 5
             )
+            .scaleEffect(isHovered ? 1.045 : 1)
         }
         .buttonStyle(.plain)
         .frame(width: 64, height: 64)
         .padding(4)
-        .scaleEffect(isHovered ? 1.045 : 1)
-        .animation(.easeOut(duration: 0.18), value: isHovered)
-        .onHover { isHovering in
-            hoveredProbability = isHovering ? label : nil
-            if isHovering {
-                startProbabilityHoverSequence(label: label, value: actualValue)
-            } else {
-                stopProbabilityHoverSequence(label: label)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active:
+                updateProbabilityHover(label: label, isHovering: true, value: actualValue)
+            case .ended:
+                updateProbabilityHover(label: label, isHovering: false, value: actualValue)
             }
         }
         .contentShape(Circle())
@@ -267,25 +278,56 @@ struct OrbView: View {
         .offset(y: offset)
     }
 
+    private func updateMainHover(_ isHovering: Bool) {
+        guard hovering != isHovering else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            hovering = isHovering
+        }
+    }
+
+    private func updateProbabilityHover(
+        label: String,
+        isHovering: Bool,
+        value: Double?
+    ) {
+        guard (hoveredProbability == label) != isHovering else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            hoveredProbability = isHovering ? label : nil
+        }
+        if isHovering {
+            startProbabilityHoverSequence(label: label, value: value)
+        } else {
+            stopProbabilityHoverSequence(label: label)
+        }
+    }
+
     private func startMainHoverSequence() {
         guard monitor.account != nil else { return }
 
-        mainHoverSequence &+= 1
-        let sequenceID = mainHoverSequence
+        mainRefreshTask?.cancel()
+        mainRefreshTask = Task { @MainActor in
+            withAnimation(.easeInOut(duration: 0.30)) {
+                displayedRemaining = 0
+            }
 
-        withAnimation(.easeInOut(duration: 0.28)) {
-            displayedRemaining = 0
-        }
+            do {
+                try await Task.sleep(nanoseconds: 320_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-            guard sequenceID == mainHoverSequence, hovering else { return }
             withAnimation(.easeInOut(duration: 0.52)) {
                 displayedRemaining = 100
             }
-        }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.88) {
-            guard sequenceID == mainHoverSequence, hovering else { return }
+            do {
+                try await Task.sleep(nanoseconds: 560_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+
             withAnimation(.easeOut(duration: 0.56)) {
                 displayedRemaining = remaining
             }
@@ -293,7 +335,8 @@ struct OrbView: View {
     }
 
     private func stopMainHoverSequence() {
-        mainHoverSequence &+= 1
+        mainRefreshTask?.cancel()
+        mainRefreshTask = nil
         withAnimation(.easeOut(duration: 0.20)) {
             displayedRemaining = remaining
         }
@@ -302,24 +345,30 @@ struct OrbView: View {
     private func startProbabilityHoverSequence(label: String, value: Double?) {
         guard value != nil else { return }
 
-        probabilityHoverSequence &+= 1
-        let sequenceID = probabilityHoverSequence
+        probabilityRefreshTask?.cancel()
+        probabilityRefreshTask = Task { @MainActor in
+            withAnimation(.easeInOut(duration: 0.30)) {
+                setDisplayedProbability(0, for: label)
+            }
 
-        withAnimation(.easeInOut(duration: 0.28)) {
-            setDisplayedProbability(0, for: label)
-        }
+            do {
+                try await Task.sleep(nanoseconds: 320_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-            guard sequenceID == probabilityHoverSequence,
-                  hoveredProbability == label else { return }
             withAnimation(.easeInOut(duration: 0.52)) {
                 setDisplayedProbability(100, for: label)
             }
-        }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.88) {
-            guard sequenceID == probabilityHoverSequence,
-                  hoveredProbability == label else { return }
+            do {
+                try await Task.sleep(nanoseconds: 560_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+
             withAnimation(.easeOut(duration: 0.56)) {
                 setDisplayedProbability(currentProbability(for: label), for: label)
             }
@@ -327,7 +376,8 @@ struct OrbView: View {
     }
 
     private func stopProbabilityHoverSequence(label: String) {
-        probabilityHoverSequence &+= 1
+        probabilityRefreshTask?.cancel()
+        probabilityRefreshTask = nil
         withAnimation(.easeOut(duration: 0.20)) {
             setDisplayedProbability(currentProbability(for: label), for: label)
         }
@@ -368,33 +418,3 @@ struct OrbView: View {
     }
 
     private func probabilityText(_ value: Double?) -> String {
-        guard let value else { return "—" }
-        return "\(Int(value.rounded()))%"
-    }
-
-    private func probabilityAccent(_ value: Double?) -> Color {
-        guard let value else {
-            return Color(nsColor: .systemGray)
-        }
-        if value >= 60 {
-            return Color(nsColor: .systemGreen)
-        }
-        if value >= 30 {
-            return Color(nsColor: .systemOrange)
-        }
-        return Color.accentColor
-    }
-}
-
-private struct AnimatedIntegerText: View, Animatable {
-    var value: Double
-
-    var animatableData: Double {
-        get { value }
-        set { value = newValue }
-    }
-
-    var body: some View {
-        Text("\(Int(value.rounded()))")
-    }
-}
